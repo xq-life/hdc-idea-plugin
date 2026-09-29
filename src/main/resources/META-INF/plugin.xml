@@ -1,0 +1,40 @@
+<idea-plugin>
+    <id>com.xq.hdcwifi</id>
+    <name>HDC Wi-Fi</name>
+    <vendor url="https://github.com/xq-life">xq-life</vendor>
+
+    <description><![CDATA[
+        Manage HarmonyOS / OpenHarmony devices over Wi-Fi from the IDE &mdash; like ADB WiFi, but for
+        HDC (<code>hdc tconn</code> / <code>hdc tconn -remove</code>).
+        <ul>
+          <li>Visual device panel: add, connect, disconnect and forget devices by IP:port, with connection history</li>
+          <li>Per-device connection state (Connected / Connecting / Failed / Not connected) with the failure reason on hover</li>
+          <li>On-demand local-network scan that derives the real network range from each interface's netmask and probes multiple ports per host, so devices on random Wi-Fi debugging ports are found</li>
+          <li>Auto-refresh with quick interval choices (Off / 5s / 10s / 30s / 60s) and a last-updated timestamp</li>
+          <li>Optional serial auto-connect for saved or newly discovered devices (off by default)</li>
+          <li>Device information panel (product model, brand, software and API version)</li>
+          <li>Shell command runner per device</li>
+          <li>File send/receive (push/pull) with live output</li>
+          <li>hilog viewer with keyword filter, pause and auto-scroll</li>
+          <li>Simplified Chinese interface, with action verbs such as Connect and Disconnect kept in English</li>
+        </ul>
+        The HDC binary path is fully configurable under Settings &gt; Tools &gt; HDC Wi-Fi
+        (auto-detected from DevEco Studio / OpenHarmony / HarmonyOS SDK locations and PATH).
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="HDC Wi-Fi"
+                    anchor="right"
+                    factoryClass="com.xq.hdcwifi.toolwindow.HdcToolWindowFactory"
+                    icon="com.xq.hdcwifi.Icons.HDC"/>
+
+        <applicationConfigurable parentId="tools"
+                                 id="com.xq.hdcwifi.settings"
+                                 displayName="HDC Wi-Fi"
+                                 instance="com.xq.hdcwifi.settings.HdcSettingsConfigurable"/>
+
+        <notificationGroup id="HDC Wi-Fi" displayType="BALLOON"/>
+    </extensions>
+</idea-plugin>

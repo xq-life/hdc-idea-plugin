@@ -1,0 +1,10 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+.DS_Store
+idea-sandbox/
+
+# Marketplace signing key pair and its password - never commit these
+signing/

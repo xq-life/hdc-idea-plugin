@@ -1,0 +1,246 @@
+# HDC Wi-Fi — 交互与视觉契约 (v1, 由产品经理签发)
+
+本文件是本次优化的**约束性契约**。实现必须逐条满足；设计同学可在 `docs/ux/UX-SPEC.md` 中细化与补充，
+但不得与本文件的决策冲突——若认为某条决策有误，向 Lead 提出，由 Lead 修改本文件后生效。
+
+## 0. 目标与验收原则
+
+用户视角的三句话目标：
+
+1. **一眼看清每台设备现在是什么状态**，而不是靠猜。
+2. **清楚知道哪个按钮会「连上」、哪个会「断开」**，不会误点。
+3. **不必反复手点刷新，也不必手输 IP 去找设备**。
+
+所有视觉改动必须使用 IntelliJ Platform 主题色（`JBColor` / `UIUtil` / `JBUI.CurrentTheme`），
+**禁止硬编码除状态语义色以外的颜色**（现有代码里的 `Color(0x59A869)` 属于要清理的问题）。
+
+---
+
+## 1. 连接状态模型（权威定义）
+
+在 `com.xq.hdcwifi.model` 中引入显式状态，设备行的状态由它驱动，不再由 `connected: Boolean` + 连接中集合拼凑。
+
+```
+enum class DeviceConnectionState { DISCONNECTED, CONNECTING, CONNECTED, FAILED }
+```
+
+状态语义与视觉（**四态必须互斥且可区分**）：
+
+| 状态 | 指示点 | 文字（英文 UI） | 颜色 | 备注 |
+|---|---|---|---|---|
+| `CONNECTED` | 实心圆 | `Connected` | 成功绿（主题语义色） | 绿点 + 绿字，唯一用绿色的状态 |
+| `CONNECTING` | **动画旋转指示器** | `Connecting…`（省略号为单字符 …） | 主题次要前景色 | 必须有动效，静止的“Connecting…”算不达标 |
+| `FAILED` | 实心圆 | `Failed` | 错误红（主题语义色） | 鼠标悬停 tooltip 显示原始错误信息；状态**持久**到下次成功或用户重试，不能只往控制台打印一行 |
+| `DISCONNECTED` | 空心圆 | `Not connected` | 主题次要前景色 | |
+
+硬性要求：
+
+- **状态与按钮文案必须一致**：`CONNECTED` 行只能出现「断开」语义按钮；其余三态只能出现「连接」语义按钮。
+- `CONNECTING` 期间该行的连接/断开按钮禁用，但**仍可见**（不要把按钮替换成 "Connecting..." 文本，那是当前的缺陷）。
+- 状态文本是**独立的第二行/同一行次级标签**，不能复用当前的 `details` 文案（"HarmonyOS device - ip:port" 不能充当状态）。
+- 失败原因要能从 UI 回溯：`FAILED` + tooltip；同时保留控制台输出。
+
+## 2. 连接 / 断开按钮区分（核心诉求）
+
+两类按钮必须**同时**在颜色、图标、语义三个维度区分：
+
+- **Connect（主操作）**
+  - 图标：平台「运行/接入」类图标（如 `AllIcons.Actions.Execute` 或等价）。
+  - 前景：主题链接/主操作色（成功绿系）。
+  - 文案：`Connect`。
+- **Disconnect（次要/破坏性操作）**
+  - 图标：平台「断开/停止/暂停」类图标（如 `AllIcons.Actions.Suspend`）。
+  - 前景：**主题常规前景色或次要色，不得为绿色**（当前缺陷：Connect 与 Disconnect 都是绿色）。
+  - 文案：`Disconnect`。
+  - 不允许使用 `AllIcons.Actions.GC`（垃圾桶语义）表示「忘记设备」——改用 `AllIcons.General.Remove` 或等价删除语义图标。
+
+按钮层级：`Connect` 为主按钮（主操作色 + 图标）；`Disconnect` 为次按钮（中性色 + 图标）。
+两者都是 flat button（沿用现有 `isContentAreaFilled = false` 风格），但**不可看起来一模一样**。
+
+## 3. 自动刷新（Auto-refresh）
+
+当前缺陷：间隔只能在设置里改、工具窗内无法开关、暂停不感知窗口可见性、每次 tick 全量重建列表导致滚动位置跳动。
+
+要求：
+
+1. **工具窗内可开关**：工具栏提供自动刷新按钮，带「开/关」两态视觉（选中态可辨识），tooltip 显示当前间隔。
+2. **可改间隔**：同一入口提供快捷间隔选择（至少 `Off / 5s / 10s / 30s / 60s`），与设置页双向一致（改一处，另一处 `configureAutoRefresh()` 后同步）。
+3. **窗口不可见时暂停**（`!isShowing` 时跳过该次 tick），恢复可见时立即补一次刷新。
+4. **状态可见**：显示「最后更新 HH:mm:ss」；刷新进行中显示轻量进行中指示（不能整行闪烁）。
+5. **无变化不重建 UI**：对刷新结果计算签名，数据未变化时**不重建**设备面板，从而不丢失滚动位置与悬停状态；必须重建时保留滚动位置。
+6. **刷新风暴防护**：不得每个 tick 对所有已连接设备重跑 `param get`（现 `loadMissingDetails` 路径）。设备详情要有 TTL（建议 ≥60s）或仅缺失时取一次；设置页 `autoRefreshSeconds` 仍为权威值，范围仍为 `0..3600`。
+
+## 4. 可连接设备检测（Discover，已确认范围 = 方案 C）
+
+3. **按需扫描**：默认**不扫描**，用户显式点击「扫描」才执行；扫描过程可**取消**。
+
+实现要求：
+
+1. 新工具栏按钮 `Scan for devices`（放大镜/搜索类图标），带可用性状态（HDC 不可用或已在扫描时禁用）。
+2. 候选主机来源（按优先级）：
+   - a) 已保存设备的 host（总是包含，成本低）；
+   - b) 本机网络接口所在网段（默认取本机 IPv4 所在 `/24`），**仅在用户点击扫描时**枚举；
+   - c) 若设置了「自定义网段/CIDR」（可选项），使用用户给定范围。
+3. 探测方式：对候选 host 的**目标端口**（沿用 `settings.defaultPort`，允许扫描时覆盖）做带超时的 TCP 连通性探测；**并发必须有上限**（建议 32），单次超时短（建议 300ms 量级），整体可取消。
+4. 进度反馈：扫描中显示进度（如 `Scanned 34/254`）与「取消」；结束后给出结果或明确空态文案，例如
+   `No devices found on 192.168.1.0/24.` / 非本机网段时的等价文案。
+5. 结果分组：新增分组 `Available on network (N)`，每行提供 `Connect`（主操作样式）。
+6. **不得自动把扫描结果写入「已保存设备」**，除非连接成功（沿用现有 `rememberDevice` 语义）。
+7. 扫描**不修改**任何设备的连接状态；`CONNECTED` 的设备若出现在扫描结果中，应表现一致（不重复列出或标注为已连接——由设计同学在 SPEC 中定稿，但必须无歧义）。
+8. 网络枚举要容错：无网络接口/无 IPv4/权限异常时给出友好文案，不抛异常刷控制台堆栈。
+
+## 5. 是否自动连接（Auto-connect 配置）
+
+新增设置项（`HdcSettings.State`），**默认全部关闭**（安全默认，不惊吓用户）：
+
+- `autoConnectDiscovered: Boolean = false` — 扫描发现设备后自动连接。
+- `autoConnectSaved: Boolean = false` — IDE 启动/工具窗打开时自动连接已保存设备。
+
+要求：
+
+1. 两项都要在 **Settings > Tools > HDC Wi-Fi** 可配，带一句人话说明（说明自动连接会做什么、失败会怎样）。
+2. 自动连接必须**串行**（同一时刻只连一台），有次数上限（同一设备一次会话内不无限重试），失败只记控制台/状态，**不弹通知轰炸**。
+3. 自动连接产生的状态必须走第 1 节的状态机（用户要能看到 `Connecting…` → `Connected` / `Failed`）。
+4. 用户手动点击连接的行为与自动连接一致（同一代码路径），避免两套逻辑。
+
+## 6. 其他必须一并修掉的体验缺陷
+
+1. **设备行高度**：`maximumSize = JBUI.scale(76)` 固定高度会截断长设备名/详情，改为自适应高度。
+2. **分组折叠指示**：不要用 `⌃`/`⌄` 文本字符，改用平台图标（如 `AllIcons.General.ArrowDown` / `ArrowRight`）。
+3. **空态**：`Connected devices` 为空时，不能整段消失让用户以为坏了；显示一条克制的空态文案。
+4. **分组头不显示计数为 0 的误导信息**；计数必须与实际行数一致。
+5. 所有新增 UI 文案风格与现有英文 UI 一致；不得引入中文硬编码到 UI（代码注释可以用中文）。
+
+## 7. 交付与验证边界
+
+- `src/main/**` 由 **impl-ui** 唯一写手负责；`src/test/**` 由 **verify-qa** 负责。二者不得越界，避免同文件冲突。
+- `docs/ux/UX-SPEC.md` 由 **ux-spec** 负责。
+- 验收命令（JDK 21）：
+  ```shell
+  export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+  ./gradlew test
+  ./gradlew buildPlugin
+  ```
+- 每个契约条目都要有对应的实现证据（文件:行）或测试；无法自动化的（动效、颜色语义）要有代码级证据 + 明确的自检说明。
+
+---
+
+## 8. 修订记录（Lead / 产品经理裁决）
+
+### v1.1 — 对 UX-SPEC 三条异议的裁决（全部批准）
+
+1. **批准：扫描能力落在服务层。** 契约 §4 的“实现要求”允许并**要求**在 `HdcService`（或新建应用级 scanner）中新增 TCP 探测、网络接口/CIDR 枚举、受限并发与可取消 API。并发上限必须是可以被验证的常量或参数（当前实现为 `Semaphore(32)`），不允许把扫描伪装在 UI 层。
+2. **批准：状态指示器自绘。** 允许新增 `StatusIndicatorIcon` 自绘四态几何（实心圆/空心圆/旋转环）；形状与文案必须独立于颜色可辨。**约束**：颜色必须取自主题（`UIUtil` / `JBColor` / `JBUI.CurrentTheme`）；旋转动画的 `Timer` 必须在面板 `dispose()` 时停止，不得泄漏。
+3. **批准：自定义 CIDR 为“功能必须提供、用户填写可选”。** 契约 §4.2(c) 的“可选项”据此澄清。CIDR 字段必须在 Settings 中可配置；支持 IPv4 CIDR 前缀（不限于 `/24`），有效地址总数上限 4096，超限或非法（含 IPv6）时必须给出**明确错误提示**，不得静默返回空结果。
+
+### v1.2 — 追加发现（Lead 代码复核，2026-09-29）
+
+- 由 Lead 直接修复了实现过程中引入的两处缺陷：`HdcDevice.kt` 文件尾泄漏的 `EOF` 标记（编译失败）；`HdcService.kt` 中 `@Service` 注解误挂到 `HdcScanProgress` 数据类上导致 `HdcService` 不再是注册服务（**编译通过但运行时会 `ServiceNotFoundException`**）。后续实现者不得回退这两处修复。
+- `HdcService.expandCidr` 目前**只接受 `/24`**，其它前缀静默返回空列表 —— 违反 v1.1 第 3 条，必须修正。
+
+### v1.3 — 独立验证后的缺陷修复（Lead 实施，2026-09-29）
+
+verify-qa 独立验证（72 个测试、76 项验收）发现 14 条缺陷，Lead 采纳并修复其中 12 条：
+
+| 编号 | 问题 | 处理 |
+|---|---|---|
+| D1 | `deviceSignature` 不编码分组归属与字段边界，Forget 后签名可能不变导致界面不刷新 | 已修：分组分隔符 + 字段分隔符 + 分组归属进入签名 |
+| D2 | 已保存地址的端口被丢弃，非默认端口设备永远扫不到 | 已修：`candidateTargets` 按 `host:port` 建候选，保存地址保留自身端口 |
+| D3 | 扫描进度/结果无独立展示位，有结果时 `Found N` 永不显示、取消提示永久停留 | 已修：工具栏独立状态标签 + 4s/8s 自动清除 |
+| D4 | 工具窗重新可见时不补刷（面板实例不重建） | 已修：`wasShowing` 边沿触发补刷 |
+| D5 | 扫描按钮无 HDC 可用性状态 | 已修：HDC 缺失时禁用并给出 tooltip |
+| D6 | 扫描向无上限线程池一次性提交全部探测，线程数逼近候选数 | 已修：专用 `newFixedThreadPool(SCAN_CONCURRENCY=32)`，`dispose()` 关闭 |
+| D8 | 双击 Connect 重复入队、重复执行 `tconn` | 已修：同地址在队列中不重复入队 |
+| D9 | 用户 Disconnect 后，已在队列中的自动连接仍会重连 | 已修：入队与出队双重抑制检查 |
+| D10 | 首次打开时 `connected` 尚空，已连接设备被重复 `tconn` | 已修：保存设备自动连接延迟到首次 `list targets` 成功之后 |
+| D11 | 本机网络枚举不容错，一个异常接口可让整次扫描失败 | **v1.3 部分修复**（派生网段逐条容错）；**v1.4 完全修复**（枚举入口整体 `runCatching` 包裹） |
+| D12 | Previous 分组空态缺句号 | 已修 |
+| D14 | 设置页 `Auto-detect` 在 EDT 上做文件 IO，冻结对话框 | 已修:改为后台 daemon 线程 + 回 EDT 更新 |
+
+**明确不修（记录为已知限制）**：D7 —— 扫描取消不主动 close 进行中的 socket；单次探测 300ms 超时会兜底，实测影响可忽略。
+
+**注**：verify-qa 首轮建立的 `KnownDefectsCharacterizationTest` 曾把上述缺陷固化为“通过”的断言；本轮已要求其翻转为契约形态，避免绿色测试掩盖缺陷。
+
+### v1.4 — 第二轮独立验证的新发现问题修复（Lead 实施，2026-09-29）
+
+第二轮验证（95 个测试）在修复之上又发现 7 条问题，Lead 采纳并修复：
+
+| 编号 | 问题 | 处理 |
+|---|---|---|
+| N1 | 扫描**失败**时也把 `scanCompleted` 置真，分组空态会谎称“未找到设备” | 已修：`scanCompleted` 只在 `onSuccess` 赋值 |
+| N2 | 扫描进行中若 hdc 消失，扫描按钮被禁用 → **无法取消** | 已修：`refreshScanButton()` 由 `(hdcAvailable, 扫描中)` 推导，扫描中始终可取消 |
+| N3 | 扫描按钮的 accessible name 不随状态更新，读屏始终播报旧文案 | 已修：与 tooltip 同步更新 |
+| N4 | 忙碌时手动 Connect 若同地址已在队列中会被**静默丢弃**，违反“手动优先” | 已修：手动改为 `removeAll` + `addFirst` 提升，不再吞掉 |
+| N5 | 设置页 `hdc-test` 线程非 daemon | 已修 |
+| N6 | `NetworkInterface.getNetworkInterfaces()` 未包裹异常 | 已修：整体 `runCatching` 兜底 |
+| N7 | `failureReason` 为 `null` 与 `""` 产生相同签名（理论不可达，但签名不严格恒等） | 已修：签名区分两者 |
+
+同时闭合**最后一项验收 FAIL**：A9.4 —— 分组标题补 `VK_LEFT` / `VK_RIGHT` 键绑定；并补充了设置页 auto-refresh 的行为说明（D13）。
+
+**验收状态**：第二轮为 80 项 = 74 PASS / 1 FAIL / 3 PARTIAL / 2 MANUAL；本轮修复后应无 FAIL，最终数字以 verify-qa 第三轮报告为准。
+
+### v1.5 — 第三轮残留项修复（Lead 实施，2026-09-29）
+
+第三轮验证达到 101 个测试 / 76 PASS / 0 FAIL，但留下 3 条残留与 1 条信息项，Lead 全部处理：
+
+| 编号 | 问题 | 处理 |
+|---|---|---|
+| R1 (A9.3) | 分组标题是 `JPanel`，无 `PUSH_BUTTON` 角色，读屏播报为“面板” | 已修：新增 `SectionHeaderPanel` 覆写 `getAccessibleContext()` 返回 `PUSH_BUTTON`（`accessibleRole` 无公开 setter，只能如此） |
+| R2 (A9.4) | Left/Right 与 Space/Enter 共用同一个 toggle → 展开态按 Right 反而折叠，方向语义相反 | 已修：拆为 `EXPAND_ACTION`（Right，仅展开）与 `COLLAPSE_ACTION`（Left，仅折叠），反方向 no-op |
+| R3 (A4.19) | 枚举异常被兜底为空表 → 面板**静默误报**“本地网络未找到设备”，用户无法区分“网段真没设备”与“读不到本机接口” | 已修：`localNetworkCidrs()` 失败返回 `null`；候选择空或“有告警且无结果”一律 `Result.failure(INTERFACE_ERROR)`，不再伪装成空网络；有结果时告警经 `HdcScanResult.description` 送控制台 |
+| R4 (D13) | 设置页 auto-refresh 文案未逐字采用 SPEC | 已以信息量更大的等价说明收口 |
+
+**旁证收益**：`HdcScanResult.description` 此前**无任何消费者**（死字段），R3 修复使其真正送达控制台；语义同时由“计数摘要”改为“扫描告警”（类型 `String?`）。
+
+**注**：verify-qa 第三轮还发现两条**“空转通过”的 OPEN 断言**——它们匹配负面文本，代码换行或换 API 后自动满足，仍在宣称旧缺陷成立。已一并翻转为契约形态。这类断言是绿色测试掩盖缺陷的典型，后续验证应优先断言**行为**而非源码文本。
+
+### v1.6 — 第四轮终版的两个 UX 缺陷修复（Lead 实施，2026-09-29）
+
+第四轮达到 105 个测试 / 79 PASS / 0 FAIL，仅剩 1 项 PARTIAL 与 1 项 MANUAL。其中两处经判定为真实缺陷，Lead 修复：
+
+| 编号 | 问题 | 处理 |
+|---|---|---|
+| A4.20 | 无结果文案不区分扫描来源：只配了自定义网段时也会声称“本地网络未找到设备” —— **事实错误** | 已修：新增 `emptyScanText()`，按「有无保存地址 × 有无自定义网段」四选一，与 SPEC §7 的来源语义对齐 |
+| A9.4 ⚠️ | `render()` 每次 `removeAll()` 重建分组标题导致**键盘焦点丢失**，键盘用户每按一键都需重新 Tab | 已修：标题写入 `FOCUS_SECTION_KEY`，渲染前记录焦点所属分组，重建后 `findSectionHeader` 找回并 `requestFocusInWindow()` |
+
+**旁证收益**：第 3 轮的 `candidates` 为空时 `map{}` 产生空 futures → 完成条件永不成立 → 回调永不触发、按钮永久停在 “Cancel scan”，由 verify-qa 顺带发现；v1.5 的快失败分支已同时消灭该路径。
+
+**验收状态（终版）**：**82 项 = 81 PASS / 0 FAIL / 0 PARTIAL / 1 MANUAL**，自动化证据 59 项，`106` 个测试全绿；唯一 MANUAL 项为 A3.1（自动刷新开关两态在真实 IDE 主题下的观感），与其余 9 项必须 `runIde` 目视的清单详见 `docs/ux/ACCEPTANCE.md` §5。详见 verify-qa 第五轮报告。
+
+**过程小结**：契约签订后共进行 **4 轮独立验证**，累计发现并修复 **19** 个真实缺陷（首轮 14 + 二轮 7 中的 N1–N7 + 四轮 A4.20 与焦点丢失；含 verify-qa 顺带发现的“空候选导致回调永不触发、按钮永久停在 Cancel scan”）。所有修复均经独立复核并落入 `docs/ux/ACCEPTANCE.md`。
+
+### v1.7 — 真机截图反馈的界面缺陷修复（Lead 实施，2026-09-29）
+
+用户在真机上截图反馈，逐条定位并修复：
+
+| 编号 | 现象 | 根因与修法 |
+|---|---|---|
+| U1 | 设备列表与控制台之间有一条**亮白色粗横线** | 裸 `JSplitPane` 的 `BasicSplitPaneDivider` 取 LAF 的 `SplitPane.background`，深色主题下该键仍是浅色默认值（实测像素 `(230,232,230)`，宽度正好 = `dividerSize`）。改为自装 `BasicSplitPaneUI`，分割条用 `UIUtil.getPanelBackground()` 铺底 + `UIUtil.getBoundsColor()` 画 1px 中线 |
+| U2 | **单个设备行被拉伸到约 412px**，组间出现巨大空白，✓ 图标被垂直居中 | `BoxLayout.Y_AXIS` 把富余空间分给所有"可增长"子组件，而 `JPanel`/`JBLabel` 的 `maximumSize` 默认是 `Short.MAX_VALUE`，于是设备行/空态标签与末尾 `VerticalGlue` 平分空白。新增 `FixedHeightPanel`（`getMaximumSize()` 返回 `preferredSize.height`），设备行与空态文案均改用它 |
+| U3 | 工具栏**看不到自动刷新的间隔**，开关两态不易区分 | `autoButton.text` 随状态显示 `"30s"` / `"Off"`；另加 `foreground`（`SUCCESS` vs 上下文帮助色）与 `font`（加粗）两重差异；`toggleButton()` 不再固定尺寸以容纳文字 |
+| U4 | 间隔菜单缺少当前值提示 | 菜单先加禁用表头 `Auto-refresh: Off` / `Auto-refresh: 30s`，再分隔符，再 `REFRESH_INTERVALS` 的 ✓ 列表 |
+| U5 | 已连接设备的 **Disconnect 按钮缺少背景色**，与 Connect 区分不足 | `actionButton()` 的 secondary 分支自绘圆角色块：主题 error 色按比例混入面板底色（浅色 0.16 / 深色 0.34），并叠加 hover/pressed 提亮。**自绘而非设 `background`**，因为按钮是否填充背景取决于 LAF 对 `isOpaque` 的处理，Darcula 与 Metal 不一致 |
+| U6 | 设置页为英文 | `HdcSettingsConfigurable.kt` 全部用户可见文案改为中文（仅保留产品名 `HDC Wi-Fi` 与线程名等标识符） |
+
+**验证方式说明**：U1/U2 的根因是用截图像素测量定位的（标题带位置、白线行号与像素值、绿色标注框为**用户手绘标注**而非程序绘制，已排除）。U5 的自绘方案用独立探针程序做了像素级验证（深色下 chip 实测 `#5E3335`，与 Connect 的 `#1E1F22` 不同）。**这些视觉结论最终仍需 `runIde` 目视确认**，测试 JVM 无法构造 `HdcMainPanel`。
+
+### v1.8 — 扫描可发现性修复，以及一个由验证拦下的 BLOCKER（2026-09-29）
+
+用户在真机上反馈「本地网络有设备但搜索不到」。经实测定位为**双重漏检**：
+
+| 编号 | 缺陷 | 根因 | 修法 |
+|---|---|---|---|
+| S1 | 设备所在的 `172.16.0.x` **从未被探测** | `localNetworkCidrs()` 把掩码**硬编码为 `/24` 且只取 IP 前三段**。本机 `en1` 真实掩码是 `255.255.254.0`（**/23**，含 `172.16.0.x`），旧代码只产出 `172.16.1.0/24`；同时还白扫 `127.0.0.0/24` | 改用 `InterfaceAddress.networkPrefixLength` 按位掩码推导（`networkCidr`），并跳过 down / loopback / link-local 接口 |
+| S2 | 就算探到主机也找不到：**每台主机只探一个端口** | 探测固定使用 `DEFAULT_PORT = 5555`，而无线调试分配的是**随机高位端口**（实测该设备 `:5555` 与 `:8710` 均 ConnectionRefused，仅 `:38343` 开放） | 端口集 = 默认端口 ∪ 用户配置的附加端口（新设置项 `scanPorts`）∪ **已保存设备的端口**；对范围内每台主机做笛卡尔积探测，上限 `MAX_SCAN_PORTS = 6` |
+| S3 | 扫描过程不可诊断 | 扫描不产生任何日志 | 控制台新增开始日志、`scanSummary`（**网段 + 端口 + 探测总数 + 命中数**）、取消日志与 `扫描未执行：` 前缀的失败日志 |
+| S4 | 候选数由 510 涨到 3064 后界面会卡死 | 每完成一个探测就向 EDT 投递一次进度事件，**且每次都 `render()` 重建整个设备列表** | 服务侧按时间节流（`PROGRESS_INTERVAL_MS = 200`）；面板抽出 `applyScanStatus()`，进度回调不再 `render()`；`SCAN_CONCURRENCY` 32 → 64 |
+
+**BLOCKER（由独立验证者发现并阻止）**：S1 首次实现的 `networkCidr()` 写成
+
+```kotlin
+.joinToString(".", "/$prefixLength") { ... }   // 错误
+```
+
+`joinToString` 的第二个位置参数是 **`prefix`** 而非 `postfix`，因此实际产出 `/23172.16.0.0` 这种**非法网段**；`candidateTargets` 里 `runCatching { expandCidr(cidr) }.getOrNull()` 全部吞成 null，导致**本机网段一个 host 都不探**——在 S1 修好之前，情况比原来的硬编码 `/24` 更糟。验证者用**反射直调生产私有方法**复现：`localNetworkCidrs()` → `[/23172.16.0.0, /22192.168.0.0]`，`candidateTargets(...)` 的 `targets` 为 **0**。
+
+**方法论教训（必须记住）**：实现者当时声称"已端到端验证通过"，但其探针是**Java 复刻版**而非生产 Kotlin 代码，因此正确地打印了 `172.16.0.0/23`，而真实实现是错的。结论：**涉及 `localNetworkCidrs` / `candidateTargets` / `networkCidr` 的结论，只接受"反射直调生产方法"这一级证据，不接受任何复刻实现。**
