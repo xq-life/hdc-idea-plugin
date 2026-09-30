@@ -20,10 +20,10 @@ class FilePane(private val service: HdcService) : JPanel(BorderLayout()) {
 
     private val localField = JBTextField()
     private val remoteField = JBTextField("/data/local/tmp/")
-    private val sendButton = JButton("Send to device")
-    private val receiveButton = JButton("Receive from device")
-    private val stopButton = JButton("Stop")
-    private val statusLabel = JBLabel("Ready")
+    private val sendButton = JButton("发送到设备")
+    private val receiveButton = JButton("从设备接收")
+    private val stopButton = JButton("停止")
+    private val statusLabel = JBLabel("就绪")
     private val outputArea = JBTextArea().apply {
         isEditable = false
         font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
@@ -33,7 +33,7 @@ class FilePane(private val service: HdcService) : JPanel(BorderLayout()) {
     private var transferGeneration = 0
 
     init {
-        val browseSend = JButton("Browse...").apply {
+        val browseSend = JButton("浏览…").apply {
             addActionListener {
                 val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
                 val file = FileChooser.chooseFile(descriptor, null, null)
@@ -49,8 +49,8 @@ class FilePane(private val service: HdcService) : JPanel(BorderLayout()) {
         }
 
         val form = FormBuilder.createFormBuilder()
-            .addLabeledComponent(JBLabel("Local file:"), localRow)
-            .addLabeledComponent(JBLabel("Remote path:"), remoteField)
+            .addLabeledComponent(JBLabel("本地文件："), localRow)
+            .addLabeledComponent(JBLabel("设备路径："), remoteField)
             .panel
             .apply { border = JBUI.Borders.empty(8) }
 
@@ -72,6 +72,7 @@ class FilePane(private val service: HdcService) : JPanel(BorderLayout()) {
         sendButton.addActionListener { send() }
         receiveButton.addActionListener { receive() }
         stopButton.addActionListener { stopCurrent() }
+        stopButton.isEnabled = false
         bind(null)
     }
 
@@ -90,7 +91,7 @@ class FilePane(private val service: HdcService) : JPanel(BorderLayout()) {
         val local = localField.text.trim()
         val remote = remoteField.text.trim()
         if (local.isEmpty() || remote.isEmpty()) {
-            statusLabel.text = "Enter both local and remote paths"
+            statusLabel.text = "请填写本地路径和设备路径"
             return
         }
         startTransfer("send") { onLine, onExit -> service.startFileSend(current, local, remote, onLine, onExit) }
@@ -101,7 +102,7 @@ class FilePane(private val service: HdcService) : JPanel(BorderLayout()) {
         val remote = remoteField.text.trim()
         var local = localField.text.trim()
         if (remote.isEmpty() || local.isEmpty()) {
-            statusLabel.text = "Enter both remote and local paths"
+            statusLabel.text = "请填写设备路径和本地路径"
             return
         }
         // If the local path is an existing directory, append the remote file name.
@@ -119,9 +120,10 @@ class FilePane(private val service: HdcService) : JPanel(BorderLayout()) {
     ) {
         stopCurrent()
         val generation = ++transferGeneration
-        statusLabel.text = "Transferring ($kind) ..."
+        statusLabel.text = if (kind == "send") "正在发送…" else "正在接收…"
         sendButton.isEnabled = false
         receiveButton.isEnabled = false
+        stopButton.isEnabled = true
         stream = starter(
             { line -> outputArea.append(line + "\n"); scrollEnd() },
             { code ->
@@ -129,13 +131,15 @@ class FilePane(private val service: HdcService) : JPanel(BorderLayout()) {
                 stream = null
                 sendButton.isEnabled = target != null
                 receiveButton.isEnabled = target != null
-                statusLabel.text = if (code == 0) "Done ($kind)" else "$kind failed (exit $code)"
+                stopButton.isEnabled = false
+                statusLabel.text = if (code == 0) "传输完成" else "传输失败（退出码 $code）"
             }
         )
         if (stream == null) {
             sendButton.isEnabled = target != null
             receiveButton.isEnabled = target != null
-            statusLabel.text = "$kind could not be started"
+            stopButton.isEnabled = false
+            statusLabel.text = "无法启动传输"
         }
     }
 
@@ -144,7 +148,8 @@ class FilePane(private val service: HdcService) : JPanel(BorderLayout()) {
         transferGeneration++
         stream = null
         current.stop()
-        statusLabel.text = "Stopped"
+        stopButton.isEnabled = false
+        statusLabel.text = "已停止"
         sendButton.isEnabled = target != null
         receiveButton.isEnabled = target != null
     }

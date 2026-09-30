@@ -16,7 +16,7 @@ data class HdcDevice(
             systemVersion.isNotBlank() && apiVersion.isNotBlank() -> "$systemVersion (API $apiVersion) - $address"
             systemVersion.isNotBlank() -> "$systemVersion - $address"
             apiVersion.isNotBlank() -> "API $apiVersion - $address"
-            else -> "HarmonyOS device - $address"
+            else -> "HarmonyOS 设备 - $address"
         }
 
     val isConnected: Boolean get() = state == DeviceConnectionState.CONNECTED

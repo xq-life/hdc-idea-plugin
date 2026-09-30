@@ -14,8 +14,8 @@ class DeviceToolsDialog(private val target: String, service: HdcService) : Dialo
     private val logPane = LogPane(service)
 
     init {
-        title = "HDC Device Tools - $target"
-        setOKButtonText("Close")
+        title = "HDC 设备工具 - $target"
+        setOKButtonText("关闭")
         isResizable = true
         init()
         infoPane.bind(target)
@@ -25,9 +25,9 @@ class DeviceToolsDialog(private val target: String, service: HdcService) : Dialo
     }
 
     override fun createCenterPanel(): JComponent = JTabbedPane().apply {
-        addTab("Info", infoPane)
+        addTab("设备信息", infoPane)
         addTab("Shell", shellPane)
-        addTab("Files", filePane)
+        addTab("文件传输", filePane)
         addTab("Hilog", logPane)
         preferredSize = Dimension(760, 520)
     }

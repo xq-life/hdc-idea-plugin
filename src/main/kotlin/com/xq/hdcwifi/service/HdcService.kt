@@ -393,9 +393,28 @@ class HdcService : Disposable {
                 }.getOrDefault("-")
                 info[label] = value
             }
-            deviceInfoCache[target] = info
+            val system = displaySystemName(info)
+            val ordered = linkedMapOf<String, String>()
+            ordered["Target"] = target
+            ordered["System"] = system
+            info.filterKeys { it != "Target" }.forEach { (key, value) -> ordered[key] = value }
+            deviceInfoCache[target] = ordered
             val waiting = deviceInfoCallbacks.remove(target).orEmpty()
-            invokeLater { waiting.forEach { it(info) } }
+            invokeLater { waiting.forEach { it(ordered) } }
+        }
+    }
+
+    private fun displaySystemName(info: Map<String, String>): String {
+        val software = info["Software version"].orEmpty()
+        val release = info["System release"].orEmpty().takeUnless { it == "-" }.orEmpty()
+        val harmonyVersion = Regex("(?<![A-Za-z0-9])([2-9]\\d*(?:\\.\\d+){1,3})(?:\\(|$)")
+            .find(software)?.groupValues?.get(1)
+        return when {
+            harmonyVersion != null -> "HarmonyOS $harmonyVersion"
+            software.contains("OpenHarmony", ignoreCase = true) ->
+                listOf("OpenHarmony", release).filter { it.isNotBlank() }.joinToString(" ")
+            release.isNotBlank() -> "HarmonyOS $release"
+            else -> "HarmonyOS"
         }
     }
 

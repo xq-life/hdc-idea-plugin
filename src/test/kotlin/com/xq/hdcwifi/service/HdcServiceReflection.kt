@@ -94,7 +94,12 @@ internal object HdcServiceReflection {
     fun networkPorts(service: HdcService, defaultPort: Int, extraPorts: String, savedPorts: Set<Int>): List<Int> =
         call(service, "networkPorts", defaultPort, extraPorts, savedPorts) as List<Int>
 
+    /** User-facing operating system summary built from raw HDC properties. */
+    fun displaySystemName(service: HdcService, info: Map<String, String>): String =
+        call(service, "displaySystemName", info) as String
+
     /** `null` means the machine's interfaces could not be read at all (round-4 semantics). */
+    @Suppress("UNCHECKED_CAST")
     fun localNetworkCidrs(service: HdcService): List<String>? =
         call(service, "localNetworkCidrs") as List<String>?
 }

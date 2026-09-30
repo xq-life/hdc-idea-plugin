@@ -126,20 +126,21 @@ class PanelInteractionContractTest {
         // one, or the notice could be written from somewhere that never reads the state back.
         val apply = MainSources.bodyOf(panel, "private fun applyScanStatus(")
         assertTrue(apply.contains("scanStatusLabel.text = scanStatus.orEmpty()"))
-        assertTrue(apply.contains("scanStatusLabel.isVisible = scanStatus != null"))
+        assertTrue(apply.contains("scanStatusPanel.isVisible = scanStatus != null"))
+        assertTrue("取消操作只在扫描中显示", apply.contains("scanStatusPanel.getComponent(1).isVisible = scanHandle != null"))
         assertEquals("the label text may only be written from the state", 1, Regex("scanStatusLabel\\.text = ").findAll(panel).count())
-        assertEquals("and so may its visibility", 1, Regex("scanStatusLabel\\.isVisible = ").findAll(panel).count())
+        assertEquals("面板可见性只能由扫描状态推导", 1, Regex("scanStatusPanel\\.isVisible = ").findAll(panel).count())
 
         val render = MainSources.bodyOf(panel, "private fun render(")
         assertTrue("render must apply the state rather than copy-paste it", render.contains("applyScanStatus()"))
         assertFalse("render must not write the label directly any more", render.contains("scanStatusLabel.text"))
 
         val set = MainSources.bodyOf(panel, "private fun setScanStatus(")
-        assertEquals("both the set path and the auto-clear path apply the state", 2, Regex("applyScanStatus\\(\\)").findAll(set).count())
-        assertTrue("the auto-clear timer must go through the same door", set.contains("scanStatus = null"))
+        assertEquals("设置状态后必须立即更新行内组件", 1, Regex("applyScanStatus\\(\\)").findAll(set).count())
+        assertTrue("自动清除必须恢复正常空态", set.contains("scanStatus = null") && set.contains("render()"))
 
-        // the signature must include the notice, otherwise setting one would not repaint the toolbar
-        assertTrue(render.contains("\":\$scanStatus:\$availableExpanded"))
+        // the signature must include the notice, otherwise setting one would not repaint the group
+        assertTrue(render.contains("\":\$scanStatus:\$refreshError:"))
     }
 
     @Test
@@ -187,7 +188,8 @@ class PanelInteractionContractTest {
         assertTrue(cancel.contains("appendConsole(\"扫描已取消。\")"))
         val failure = start.substringAfter("onFailure = { error ->")
         assertTrue(failure.contains("appendConsole(\"扫描未执行：\$message\")"))
-        assertTrue("the toolbar keeps the bare message", failure.contains("setScanStatus(message, autoClearMs = SCAN_ERROR_MS)"))
+        assertTrue("Available 分组必须持续显示扫描错误", failure.contains("setScanStatus(message)"))
+        assertFalse("扫描错误不得自动消失", failure.contains("autoClearMs"))
         assertFalse("a failed scan must not print a completion summary", failure.contains("scanSummary("))
     }
 
@@ -201,9 +203,32 @@ class PanelInteractionContractTest {
 
         val refresh = MainSources.bodyOf(panel, "private fun refreshScanButton(")
         val branches = refresh.substringAfter("val tooltip = when {")
-        assertTrue(branches.contains("scanning -> \"Cancel scan\""))
+        assertTrue(branches.contains("scanning -> \"取消扫描\""))
         assertTrue(branches.contains("!hdcAvailable -> \"hdc 不可用，请在设置中配置。\""))
-        assertTrue(branches.contains("else -> \"Scan for devices\""))
+        assertTrue(branches.contains("else -> \"扫描设备\""))
+    }
+
+    @Test
+    fun `console starts collapsed and its toggle exposes the state`() {
+        assertTrue(panel.contains("private var consoleVisible = false"))
+        assertTrue(panel.contains("consolePanel.isVisible = false"))
+        assertTrue(panel.contains("splitPane.dividerSize = 0"))
+        val toggle = MainSources.bodyOf(panel, "private fun toggleConsole(")
+        assertTrue(toggle.contains("consoleButton.isSelected = consoleVisible"))
+        assertTrue(toggle.contains("consolePanel.isVisible = consoleVisible"))
+    }
+
+    @Test
+    fun `disconnect failure stays online and is visible on the device row`() {
+        val disconnect = MainSources.bodyOf(panel, "private fun disconnect(")
+        val success = disconnect.substringAfter("if (ok) {").substringBefore("} else {")
+        val failure = disconnect.substringAfter("} else {")
+        assertTrue(success.contains("DeviceConnectionState.DISCONNECTED"))
+        assertFalse("失败分支不得把在线设备改成未连接", failure.contains("DeviceConnectionState.DISCONNECTED"))
+        assertTrue(failure.contains("operationErrors[device.address] = error"))
+        assertTrue(failure.contains("appendConsole(error)"))
+        val row = MainSources.bodyOf(panel, "private fun deviceRow(")
+        assertTrue(row.contains("operationErrors[device.address]"))
     }
 
     // ---- round-2 fix D14 + round-3 N5: nothing blocking on a non-daemon thread -------------------

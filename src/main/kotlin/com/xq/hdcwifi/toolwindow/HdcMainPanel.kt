@@ -19,6 +19,7 @@ import com.xq.hdcwifi.service.HdcScanResult
 import com.xq.hdcwifi.service.HdcService
 import com.xq.hdcwifi.service.HdcToolNotFoundException
 import com.xq.hdcwifi.settings.HdcSettings
+import java.awt.BasicStroke
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -28,7 +29,9 @@ import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
+import java.awt.Graphics2D
 import java.awt.KeyboardFocusManager
+import java.awt.RenderingHints
 import java.awt.LayoutManager
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
@@ -112,6 +115,7 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
     }
 
     private val states = mutableMapOf<String, Status>()
+    private val operationErrors = mutableMapOf<String, String>()
     private val detailRequests = mutableMapOf<String, Long>()
     private val autoQueue = ArrayDeque<Pair<String, ConnectionOrigin>>()
     private val autoAttempted = mutableSetOf<String>()
@@ -126,6 +130,7 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
     private var refreshGeneration = 0L
     private var refreshInFlight = false
     private var refreshRequested = false
+    private var refreshError: String? = null
     private var connectionInFlight: String? = null
     private var disposed = false
     private var hasBeenShown = false
@@ -133,7 +138,7 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
     private var savedAutoConnectPending = false
     private var hdcAvailable = true
     private var scanStatusTimer: javax.swing.Timer? = null
-    private var consoleVisible = true
+    private var consoleVisible = false
     private var availableExpanded = true
     private var connectedExpanded = true
     private var previousExpanded = true
@@ -151,8 +156,23 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
     private lateinit var scanButton: JButton
     private lateinit var refreshButton: JButton
     private lateinit var autoButton: JToggleButton
+    private lateinit var consoleButton: JToggleButton
     private lateinit var updatedLabel: JBLabel
-    private lateinit var scanStatusLabel: JBLabel
+    private val scanStatusLabel = JBLabel().apply {
+        foreground = UIUtil.getContextHelpForeground()
+    }
+    private val scanStatusPanel = FixedHeightPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+        isOpaque = false
+        alignmentX = Component.LEFT_ALIGNMENT
+        border = JBUI.Borders.empty(8, 40, 8, 12)
+        add(scanStatusLabel, BorderLayout.CENTER)
+        add(JButton("取消扫描").apply {
+            isContentAreaFilled = false
+            isBorderPainted = false
+            addActionListener { cancelScan() }
+        }, BorderLayout.EAST)
+        isVisible = false
+    }
 
     private val commandListener: (String) -> Unit = { appendConsole(it) }
 
@@ -165,6 +185,8 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
             add(iconButton(AllIcons.Actions.GC, "清空命令输出") { console.text = "" }, BorderLayout.NORTH)
         }, BorderLayout.WEST)
         consolePanel.add(consoleScroll, BorderLayout.CENTER)
+        consolePanel.isVisible = false
+        splitPane.dividerSize = 0
 
         add(toolbar(), BorderLayout.NORTH)
         add(splitPane, BorderLayout.CENTER)
@@ -195,18 +217,26 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
 
     private fun toolbar(): JPanel = JPanel(FlowLayout(FlowLayout.LEFT, 2, 2)).apply {
         border = BorderFactory.createMatteBorder(0, 0, 1, 0, UIUtil.getBoundsColor())
-        add(iconButton(AllIcons.General.Add, "添加 HDC 设备") { showConnectDialog() })
 
-        scanButton = iconButton(AllIcons.Actions.Search, "Scan for devices") {
+        add(iconButton(AllIcons.General.Add, "添加设备") { showConnectDialog() })
+        scanButton = iconButton(AllIcons.Actions.Search, "扫描设备") {
             if (scanHandle == null) startScan() else cancelScan()
         }
         add(scanButton)
 
-        add(iconButton(AllIcons.Debugger.Console, "显示或隐藏命令输出") { toggleConsole() })
+        consoleButton = JToggleButton(AllIcons.Debugger.Console).apply {
+            toolTipText = "显示或隐藏命令输出"
+            accessibleContext.accessibleName = toolTipText
+            preferredSize = Dimension(JBUI.scale(30), JBUI.scale(28))
+            isContentAreaFilled = false
+            isBorderPainted = false
+            isFocusable = true
+            addActionListener { toggleConsole() }
+        }
+        add(consoleButton)
 
         refreshButton = iconButton(AllIcons.Actions.Refresh, "刷新设备列表") { refreshDevices(manual = true) }
         add(refreshButton)
-
         autoButton = toggleButton(AllIcons.Actions.Refresh, "自动刷新") {
             settings.autoRefreshSeconds = if (settings.autoRefreshSeconds == 0) DEFAULT_REFRESH_SECONDS else 0
             configureAutoRefresh()
@@ -227,15 +257,6 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
             border = JBUI.Borders.emptyLeft(8)
         }
         add(updatedLabel)
-
-        // Scan progress and its result need a home of their own: the Available group's empty
-        // text disappears as soon as a scan returns anything, which used to hide progress.
-        scanStatusLabel = JBLabel().apply {
-            foreground = UIUtil.getContextHelpForeground()
-            border = JBUI.Borders.emptyLeft(8)
-            isVisible = false
-        }
-        add(scanStatusLabel)
     }
 
     private fun iconButton(icon: Icon, tooltip: String, action: () -> Unit): JButton =
@@ -308,6 +329,7 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
             refreshButton.isEnabled = true
             result.fold(
                 onSuccess = { targets ->
+                    refreshError = null
                     connected = targets.distinct()
                     connected.filter { it.contains(':') }.forEach {
                         settings.rememberDevice(it)
@@ -333,7 +355,9 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
                     } else {
                         "刷新失败：${error.message}"
                     }
+                    refreshError = message
                     appendConsole(message)
+                    render()
                 }
             )
             if (refreshRequested) {
@@ -379,7 +403,7 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
         syncAnimationTimer()
         val groups = groups()
         val signature = deviceSignature(groups) +
-            ":$scanStatus:$availableExpanded:$connectedExpanded:$previousExpanded"
+            ":$scanStatus:$refreshError:${operationErrors.toSortedMap()}:$availableExpanded:$connectedExpanded:$previousExpanded"
         if (!force && signature == lastSignature) return
         lastSignature = signature
 
@@ -392,11 +416,13 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
             ?.takeIf { SwingUtilities.isDescendingFrom(it, devicesPanel) }
             ?.let { (it as? JComponent)?.getClientProperty(FOCUS_SECTION_KEY) as? String }
         devicesPanel.removeAll()
+        refreshError?.let { devicesPanel.add(messageRow(it, error = true)) }
         addGroup(
             "网络上的可用设备", groups.available, availableExpanded,
             { availableExpanded = !availableExpanded; render(force = true) },
-            if (scanCompleted) emptyScanText() else "点击 Scan for devices 扫描网络中的设备。",
-            showForget = false
+            if (scanCompleted) emptyScanText() else "点击“扫描设备”扫描网络中的设备。",
+            showForget = false,
+            statusComponent = scanStatusPanel.takeIf { scanStatus != null }
         )
         addGroup(
             "已连接设备", groups.connected, connectedExpanded,
@@ -427,11 +453,13 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
         expanded: Boolean,
         toggle: () -> Unit,
         emptyText: String,
-        showForget: Boolean
+        showForget: Boolean,
+        statusComponent: JComponent? = null
     ) {
         devicesPanel.add(sectionHeader(title, items.size, expanded, toggle))
         if (!expanded) return
-        if (items.isEmpty()) {
+        statusComponent?.let { devicesPanel.add(it) }
+        if (items.isEmpty() && statusComponent == null) {
             devicesPanel.add(FixedHeightPanel(BorderLayout()).apply {
                 isOpaque = false
                 alignmentX = Component.LEFT_ALIGNMENT
@@ -442,6 +470,23 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
             })
         } else {
             items.forEach { devicesPanel.add(deviceRow(it, showForget)) }
+        }
+    }
+
+    private fun messageRow(message: String, error: Boolean): JPanel = FixedHeightPanel(BorderLayout()).apply {
+        isOpaque = false
+        alignmentX = Component.LEFT_ALIGNMENT
+        border = JBUI.Borders.empty(8, 12)
+        add(JBLabel(message).apply {
+            foreground = if (error) UIUtil.getErrorForeground() else UIUtil.getContextHelpForeground()
+            toolTipText = message
+        }, BorderLayout.CENTER)
+        if (error) {
+            add(JButton("重试").apply {
+                isContentAreaFilled = false
+                isBorderPainted = false
+                addActionListener { refreshDevices(manual = true) }
+            }, BorderLayout.EAST)
         }
     }
 
@@ -521,37 +566,72 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
 
         val text = JPanel().apply {
             isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             add(JBLabel(device.name).apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                horizontalAlignment = JBLabel.LEFT
                 font = font.deriveFont(Font.BOLD)
                 toolTipText = device.name
             })
             add(JBLabel(statusText(device.state)).apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                horizontalAlignment = JBLabel.LEFT
                 foreground = statusColor(device.state)
                 toolTipText = failureTip
             })
-            add(JBLabel(device.details).apply {
+            add(JBTextArea(device.details).apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                isEditable = false
+                isOpaque = false
+                lineWrap = true
+                wrapStyleWord = true
+                rows = 1
+                border = JBUI.Borders.empty()
                 foreground = UIUtil.getContextHelpForeground()
                 toolTipText = device.details
+                minimumSize = Dimension(JBUI.scale(120), preferredSize.height)
             })
+            val visibleError = operationErrors[device.address]
+                ?: device.failureReason?.let { "连接失败：${it.ifBlank { "未知错误。" }}" }
+            if (!visibleError.isNullOrBlank()) {
+                add(JBTextArea(visibleError).apply {
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    isEditable = false
+                    isOpaque = false
+                    lineWrap = true
+                    wrapStyleWord = true
+                    rows = 1
+                    border = JBUI.Borders.empty()
+                    foreground = UIUtil.getErrorForeground()
+                    toolTipText = visibleError
+                })
+            }
         }
 
         val actions = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply {
             isOpaque = false
+            if (online) {
+                add(iconButton(AllIcons.General.Information, "设备工具") {
+                    DeviceToolsDialog(device.address, service).show()
+                }.apply { isEnabled = !connecting })
+            }
+            add(iconButton(AllIcons.Actions.Copy, "复制地址") {
+                Toolkit.getDefaultToolkit().systemClipboard
+                    .setContents(StringSelection(device.address), null)
+            }.apply { isEnabled = !connecting })
+            if (showForget && !online) {
+                add(iconButton(AllIcons.General.Remove, "忘记设备 ${device.address}") { forget(device) }
+                    .apply { isEnabled = !connecting })
+            }
             // Connect is the primary action; Disconnect must not look like it.
             add(actionButton(
-                text = if (online) "Disconnect" else "Connect",
+                text = if (online) "断开连接" else "连接",
                 icon = if (online) AllIcons.Actions.Suspend else AllIcons.Actions.Execute,
                 secondary = online
             ) {
                 if (online) disconnect(device) else requestConnection(device.address, ConnectionOrigin.MANUAL)
             }.apply { isEnabled = !connecting })
-
-            if (showForget && !online) {
-                add(iconButton(AllIcons.General.Remove, "Forget device ${device.address}") { forget(device) }
-                    .apply { isEnabled = !connecting })
-            }
-            add(moreButton(device).apply { isEnabled = !connecting })
         }
 
         return FixedHeightPanel(BorderLayout(JBUI.scale(8), 0)).apply {
@@ -559,7 +639,9 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
             border = JBUI.Borders.empty(8, 12)
             alignmentX = Component.LEFT_ALIGNMENT
             toolTipText = failureTip
-            add(JBLabel(StatusIcon(device.state) { animationFrame }).apply { toolTipText = failureTip }, BorderLayout.WEST)
+            add(JBLabel(StatusIcon(device.state) { animationFrame }).apply {
+                toolTipText = failureTip
+            }, BorderLayout.WEST)
             add(text, BorderLayout.CENTER)
             add(actions, BorderLayout.EAST)
         }
@@ -587,10 +669,10 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
     private fun actionButton(text: String, icon: Icon, secondary: Boolean, action: () -> Unit): JButton =
         object : JButton(text, icon) {
             override fun paintComponent(g: Graphics) {
-                if (secondary) {
-                    val chip = g.create()
-                    try {
-                        val radius = JBUI.scale(8)
+                val chip = g.create()
+                try {
+                    val radius = JBUI.scale(8)
+                    if (secondary) {
                         // A disabled Disconnect only greys its text unless the fill fades too, which
                         // reads as "still clickable".
                         chip.color = if (isEnabled) {
@@ -604,9 +686,18 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
                             chip.color = Color(error.red, error.green, error.blue, if (model.isPressed) 72 else 34)
                             chip.fillRoundRect(0, 0, width, height, radius, radius)
                         }
-                    } finally {
-                        chip.dispose()
+                    } else if (chip is Graphics2D) {
+                        chip.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                        chip.stroke = BasicStroke(JBUI.scale(1).toFloat())
+                        chip.color = if (isEnabled) {
+                            SUCCESS
+                        } else {
+                            blend(UIUtil.getPanelBackground(), SUCCESS, DISABLED_CHIP_FADE)
+                        }
+                        chip.drawRoundRect(0, 0, width - 1, height - 1, radius, radius)
                     }
+                } finally {
+                    chip.dispose()
                 }
                 super.paintComponent(g)
             }
@@ -637,12 +728,6 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
         (base.blue + (tint.blue - base.blue) * ratio).toInt().coerceIn(0, 255)
     )
 
-    private fun moreButton(device: HdcDevice): JButton {
-        lateinit var button: JButton
-        button = iconButton(AllIcons.Actions.More, "${device.address} 的更多操作") { showMore(device, button) }
-        return button
-    }
-
     private fun showConnectDialog() {
         val dialog = ConnectDeviceDialog()
         if (!dialog.showAndGet()) return
@@ -671,6 +756,7 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
             return
         }
         if (origin == ConnectionOrigin.MANUAL) autoSuppressed.remove(address)
+        operationErrors.remove(address)
         connectionInFlight = address
         states[address] = Status(DeviceConnectionState.CONNECTING)
         render()
@@ -721,39 +807,28 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
     private fun disconnect(device: HdcDevice) {
         // An explicit disconnect must not be undone by a queued automatic reconnect.
         autoSuppressed.add(device.address)
+        operationErrors.remove(device.address)
         service.disconnect(device.address) disconnectResult@{ ok, message ->
             if (disposed) return@disconnectResult
-            if (!ok) appendConsole("断开失败：$message")
-            connected = connected - device.address
-            states[device.address] = Status(DeviceConnectionState.DISCONNECTED)
+            if (ok) {
+                connected = connected - device.address
+                states[device.address] = Status(DeviceConnectionState.DISCONNECTED)
+                operationErrors.remove(device.address)
+                refreshDevices(manual = false)
+            } else {
+                val error = "断开失败：${message.ifBlank { "未知错误。" }}"
+                operationErrors[device.address] = error
+                appendConsole(error)
+            }
             render()
-            refreshDevices(manual = false)
         }
     }
 
     private fun forget(device: HdcDevice) {
         settings.removeDevice(device.address)
         states.remove(device.address)
+        operationErrors.remove(device.address)
         render()
-    }
-
-    private fun showMore(device: HdcDevice, source: Component) {
-        JPopupMenu().apply {
-            if (device.state == DeviceConnectionState.CONNECTED) {
-                add(JMenuItem("Device tools...").apply {
-                    addActionListener { DeviceToolsDialog(device.address, service).show() }
-                })
-                add(JMenuItem("Disconnect").apply { addActionListener { disconnect(device) } })
-                addSeparator()
-            }
-            add(JMenuItem("Copy address").apply {
-                addActionListener {
-                    Toolkit.getDefaultToolkit().systemClipboard
-                        .setContents(StringSelection(device.address), null)
-                }
-            })
-            show(source, 0, source.height)
-        }
     }
 
     private fun startScan() {
@@ -813,13 +888,14 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
                     onFailure = { error ->
                         val message = error.message ?: "无法扫描网络。"
                         appendConsole("扫描未执行：$message")
-                        setScanStatus(message, autoClearMs = SCAN_ERROR_MS)
+                        setScanStatus(message)
                         render()
                     }
                 )
             }
         )
         refreshScanButton()
+        applyScanStatus()
     }
 
     private fun cancelScan() {
@@ -853,7 +929,10 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
      */
     private fun applyScanStatus() {
         scanStatusLabel.text = scanStatus.orEmpty()
-        scanStatusLabel.isVisible = scanStatus != null
+        scanStatusPanel.isVisible = scanStatus != null
+        scanStatusPanel.getComponent(1).isVisible = scanHandle != null
+        scanStatusPanel.revalidate()
+        scanStatusPanel.repaint()
     }
 
     private fun setScanStatus(text: String?, autoClearMs: Int? = null) {
@@ -863,7 +942,7 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
         if (text != null && autoClearMs != null) {
             scanStatusTimer = javax.swing.Timer(autoClearMs) {
                 scanStatus = null
-                applyScanStatus()
+                render()
             }.apply {
                 isRepeats = false
                 start()
@@ -886,9 +965,9 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
         val scanning = scanHandle != null
         scanButton.isEnabled = hdcAvailable || scanning
         val tooltip = when {
-            scanning -> "Cancel scan"
+            scanning -> "取消扫描"
             !hdcAvailable -> "hdc 不可用，请在设置中配置。"
-            else -> "Scan for devices"
+            else -> "扫描设备"
         }
         scanButton.toolTipText = tooltip
         scanButton.accessibleContext.accessibleName = tooltip
@@ -948,6 +1027,7 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
 
     private fun toggleConsole() {
         consoleVisible = !consoleVisible
+        consoleButton.isSelected = consoleVisible
         consolePanel.isVisible = consoleVisible
         splitPane.dividerSize = if (consoleVisible) JBUI.scale(5) else 0
         splitPane.resetToPreferredSizes()
@@ -1041,7 +1121,6 @@ class HdcMainPanel(private val project: Project) : JPanel(BorderLayout()), Dispo
         private const val ANIMATION_INTERVAL_MS = 83
         private const val SCAN_TIMEOUT_MS = 300
         private const val SCAN_NOTICE_MS = 4000
-        private const val SCAN_ERROR_MS = 8000
         private const val DETAIL_TTL_MS = 60_000L
 
         /** How much of the Disconnect chip colour survives while the button is disabled. */

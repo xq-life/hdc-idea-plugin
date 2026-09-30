@@ -81,6 +81,9 @@ class PanelRenderingContractTest {
 
         val row = MainSources.bodyOf(panel, "private fun deviceRow(")
         assertTrue("the device row must refuse the slack", row.contains("return FixedHeightPanel(BorderLayout(JBUI.scale(8), 0)).apply {"))
+        assertTrue("操作区必须在设备信息右侧垂直居中", row.contains("add(actions, BorderLayout.EAST)"))
+        assertFalse("操作区不得单独占据底部一行", row.contains("add(actions, BorderLayout.SOUTH)"))
+        assertTrue("详情必须支持换行", row.contains("lineWrap = true") && row.contains("wrapStyleWord = true"))
 
         val group = MainSources.bodyOf(panel, "private fun addGroup(")
         assertTrue("the empty-state text must refuse the slack too", group.contains("devicesPanel.add(FixedHeightPanel(BorderLayout()).apply {"))
@@ -95,8 +98,35 @@ class PanelRenderingContractTest {
         val panel = MainSources.panel
         val region = MainSources.bodyOf(panel, "private fun render(") + MainSources.bodyOf(panel, "private fun addGroup(")
         val heads = Regex("""devicesPanel\.add\(([A-Za-z]+)""").findAll(region).map { it.groupValues[1] }.toSet()
-        assertEquals(setOf("sectionHeader", "deviceRow", "FixedHeightPanel", "Box"), heads)
+        assertEquals(setOf("messageRow", "sectionHeader", "it", "deviceRow", "FixedHeightPanel", "Box"), heads)
+        assertTrue("分组状态组件必须由 FixedHeightPanel 提供", panel.contains("private val scanStatusPanel = FixedHeightPanel("))
         assertTrue(MainSources.panel.contains("devicesPanel.add(Box.createVerticalGlue())"))
+    }
+
+    @Test
+    fun `device copy stays left aligned and connected rows expose device information`() {
+        val row = MainSources.bodyOf(MainSources.panel, "private fun deviceRow(")
+        assertTrue(row.contains("alignmentX = Component.LEFT_ALIGNMENT"))
+        assertTrue(row.contains("horizontalAlignment = JBLabel.LEFT"))
+        assertTrue(row.contains("AllIcons.General.Information, \"设备工具\""))
+        assertTrue(row.contains("DeviceToolsDialog(device.address, service).show()"))
+    }
+
+    @Test
+    fun `the toolbar keeps the compact borderless icon layout`() {
+        val toolbar = MainSources.bodyOf(MainSources.panel, "private fun toolbar(")
+        assertTrue(toolbar.contains("FlowLayout(FlowLayout.LEFT, 2, 2)"))
+        assertTrue(toolbar.contains("iconButton(AllIcons.General.Add, \"添加设备\")"))
+        assertTrue(toolbar.contains("scanButton = iconButton(AllIcons.Actions.Search, \"扫描设备\")"))
+        assertFalse("顶部不得恢复带文字边框按钮", toolbar.contains("textButton("))
+        assertTrue(toolbar.contains("isContentAreaFilled = false"))
+        assertTrue(toolbar.contains("isBorderPainted = false"))
+        val add = toolbar.indexOf("AllIcons.General.Add")
+        val scan = toolbar.indexOf("AllIcons.Actions.Search")
+        val console = toolbar.indexOf("AllIcons.Debugger.Console")
+        val refresh = toolbar.indexOf("AllIcons.Actions.Refresh")
+        val settings = toolbar.indexOf("AllIcons.General.GearPlain")
+        assertTrue(add < scan && scan < console && console < refresh && refresh < settings)
     }
 
     @Test
@@ -174,7 +204,9 @@ class PanelRenderingContractTest {
         assertTrue(action.contains("isContentAreaFilled = false"))
         assertTrue(action.contains("isBorderPainted = false"))
         assertTrue(action.contains("isOpaque = false"))
-        assertTrue(action.contains("border = JBUI.Borders.empty(3, 10)"))
+        assertTrue("两个按钮必须保持相同内距", action.contains("border = JBUI.Borders.empty(3, 10)"))
+        assertTrue("连接按钮必须自行绘制成功色圆角边框", action.contains("chip.drawRoundRect(0, 0, width - 1, height - 1, radius, radius)"))
+        assertTrue("连接与断开必须共用 8px 圆角", action.contains("val radius = JBUI.scale(8)"))
         assertTrue(action.contains("foreground = if (secondary) UIUtil.getLabelForeground() else SUCCESS"))
     }
 
@@ -281,14 +313,18 @@ class PanelRenderingContractTest {
     }
 
     @Test
-    fun `the chip painting does not disturb the row action buttons`() {
-        // The self-painted subclass must not touch the action/enabled wiring of the other buttons.
-        val panel = MainSources.panel
-        assertEquals(3, Regex("isEnabled = !connecting").findAll(panel).count())
-        assertTrue(panel.contains("moreButton(device).apply { isEnabled = !connecting }"))
-        assertTrue(panel.contains("""iconButton(AllIcons.General.Remove, "Forget device ${'$'}{device.address}") { forget(device) }"""))
-        val more = MainSources.bodyOf(panel, "private fun moreButton(")
-        assertTrue(more.contains("iconButton(AllIcons.Actions.More,"))
+    fun `device actions are inline icons before the primary button`() {
+        val row = MainSources.bodyOf(MainSources.panel, "private fun deviceRow(")
+        assertFalse("三点更多按钮必须移除", row.contains("AllIcons.Actions.More") || row.contains("moreButton("))
+        assertTrue(row.contains("iconButton(AllIcons.General.Information, \"设备工具\")"))
+        assertTrue(row.contains("iconButton(AllIcons.Actions.Copy, \"复制地址\")"))
+        assertTrue(row.contains("""iconButton(AllIcons.General.Remove, "忘记设备 ${'$'}{device.address}") { forget(device) }"""))
+        val tools = row.indexOf("AllIcons.General.Information")
+        val copy = row.indexOf("AllIcons.Actions.Copy")
+        val forget = row.indexOf("AllIcons.General.Remove")
+        val primary = row.indexOf("add(actionButton(")
+        assertTrue(tools < copy && copy < forget && forget < primary)
+        assertEquals(4, Regex("isEnabled = !connecting").findAll(row).count())
     }
 
     /**

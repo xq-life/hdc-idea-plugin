@@ -16,7 +16,7 @@ class DeviceInfoPane(private val service: HdcService) : JPanel(BorderLayout()) {
         font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
         lineWrap = false
     }
-    private val refreshButton = JButton("Refresh Info")
+    private val refreshButton = JButton("刷新信息")
     private var target: String? = null
 
     init {
@@ -31,9 +31,9 @@ class DeviceInfoPane(private val service: HdcService) : JPanel(BorderLayout()) {
     fun bind(target: String?) {
         this.target = target
         if (target == null) {
-            textArea.text = "Select a device to view its information."
+            textArea.text = "请选择设备以查看信息。"
         } else {
-            textArea.text = "Target: $target\nLoading... (takes a few seconds)"
+            textArea.text = "目标：$target\n正在加载…（可能需要几秒）"
             loadInfo(forceRefresh = false)
         }
     }

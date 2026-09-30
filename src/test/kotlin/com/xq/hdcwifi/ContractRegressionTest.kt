@@ -200,15 +200,15 @@ class ContractRegressionTest {
     fun `scan feedback is transient and never claims nothing was found`() {
         val panel = MainSources.panel
         // the Available group's empty text depends only on a completed scan, never on the notice
-        assertTrue(panel.contains("if (scanCompleted) emptyScanText() else \"点击 Scan for devices 扫描网络中的设备。\""))
+        assertTrue(panel.contains("if (scanCompleted) emptyScanText() else \"点击“扫描设备”扫描网络中的设备。\""))
+        assertTrue("扫描状态必须由可用设备分组承载", panel.contains("statusComponent = scanStatusPanel.takeIf { scanStatus != null }"))
         assertFalse("the transient notice must not replace the empty state", panel.contains("scanStatus ?:"))
 
-        // notices self-clear: 4s for results, 8s for errors (lifecycle asserted in
-        // PanelInteractionContractTest, which owns the setScanStatus wiring)
+        // Successful/cancelled notices self-clear after 4s; errors stay visible until retry.
         assertTrue(panel.contains("private const val SCAN_NOTICE_MS = 4000"))
-        assertTrue(panel.contains("private const val SCAN_ERROR_MS = 8000"))
         assertTrue(panel.contains("setScanStatus(\"扫描已取消。\", autoClearMs = SCAN_NOTICE_MS)"))
-        assertTrue("a failed scan reports with the longer error timeout", panel.contains("setScanStatus(message, autoClearMs = SCAN_ERROR_MS)"))
+        assertTrue("扫描失败必须持续显示", panel.contains("setScanStatus(message)"))
+        assertFalse("扫描错误不得自动消失", panel.contains("SCAN_ERROR_MS"))
 
         // and the notice timer is released with the panel
         assertTrue(MainSources.bodyOf(panel, "override fun dispose()").contains("scanStatusTimer?.stop()"))
@@ -268,7 +268,7 @@ class ContractRegressionTest {
         )
         // the tooltip must describe the Cancel meaning first, so a mid-scan hdc loss is not mislabelled
         val branches = refresh.substringAfter("val tooltip = when {")
-        assertTrue(branches.indexOf("\"Cancel scan\"") in 0 until branches.indexOf("\"hdc 不可用"))
+        assertTrue(branches.indexOf("\"取消扫描\"") in 0 until branches.indexOf("\"hdc 不可用"))
 
         // every transition of the scan handle re-derives the button
         assertTrue("starting a scan", MainSources.bodyOf(MainSources.panel, "private fun startScan(").contains("refreshScanButton()"))

@@ -38,9 +38,7 @@ class ConnectDeviceDialog : DialogWrapper(true) {
 
     init {
         title = "连接 HDC 设备（Wi-Fi）"
-        // Kept in English on purpose: action verbs stay English across the whole UI, the way the
-        // tool window already shows Connect / Disconnect.
-        setOKButtonText("Connect")
+        setOKButtonText("连接")
         isResizable = true
 
         hostBox.isEditable = true

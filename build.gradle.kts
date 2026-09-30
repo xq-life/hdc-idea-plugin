@@ -49,6 +49,12 @@ tasks {
         changeNotes.set(
             """
             <ul>
+              <li><b>1.2.0</b></li>
+              <li>Redesigned the device panel with a compact Chinese interface, borderless toolbar icons, contextual scan status, inline operation errors and a collapsed-by-default command console</li>
+              <li>Device actions are now exposed directly with semantic icons instead of a duplicate overflow menu; Connect and Disconnect use matching rounded corners with distinct success-outline and error-fill treatments</li>
+              <li>Connected and saved device rows stay compact and left-aligned at narrow widths, while operation controls remain vertically centred</li>
+              <li>The device information view now presents a clear HarmonyOS or OpenHarmony system summary while retaining raw software and release fields for diagnostics</li>
+              <li>Disconnect failures preserve the connected state, and refresh, scan and connection failures are shown in the affected device context instead of only in command output</li>
               <li><b>1.1.0</b></li>
               <li>Device rows show an explicit connection state (Connected / Connecting / Failed / Not connected) with an animated indicator; a failed connection keeps its reason on hover</li>
               <li>Connect and Disconnect are visually distinct: Connect is the primary action, Disconnect carries a tinted chip instead of the success colour</li>
@@ -77,6 +83,13 @@ tasks {
 
     test {
         useJUnit()
+    }
+
+    // Keep the compatibility gate deterministic. Auto-discovery can include IDE builds that
+    // JetBrains has already removed (for example IC-2025.2.6), failing before verification starts.
+    // These two versions cover the declared lower bound and a recent platform release.
+    runPluginVerifier {
+        ideVersions.set(listOf("IC-2023.3", "IC-2025.3"))
     }
 
     // Marketplace publishing: set INTELLIJ_PUBLISH_TOKEN and run ./gradlew publishPlugin.

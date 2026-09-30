@@ -12,11 +12,11 @@
           <li>On-demand local-network scan that derives the real network range from each interface's netmask and probes multiple ports per host, so devices on random Wi-Fi debugging ports are found</li>
           <li>Auto-refresh with quick interval choices (Off / 5s / 10s / 30s / 60s) and a last-updated timestamp</li>
           <li>Optional serial auto-connect for saved or newly discovered devices (off by default)</li>
-          <li>Device information panel (product model, brand, software and API version)</li>
+          <li>Device information panel with HarmonyOS / OpenHarmony system summary, product model, brand, software and API version</li>
           <li>Shell command runner per device</li>
           <li>File send/receive (push/pull) with live output</li>
           <li>hilog viewer with keyword filter, pause and auto-scroll</li>
-          <li>Simplified Chinese interface, with action verbs such as Connect and Disconnect kept in English</li>
+          <li>Simplified Chinese interface with compact device rows, contextual progress and inline error feedback</li>
         </ul>
         The HDC binary path is fully configurable under Settings &gt; Tools &gt; HDC Wi-Fi
         (auto-detected from DevEco Studio / OpenHarmony / HarmonyOS SDK locations and PATH).

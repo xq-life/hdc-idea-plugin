@@ -16,11 +16,11 @@ import javax.swing.JPanel
 class LogPane(private val service: HdcService) : JPanel(BorderLayout()) {
 
     private val filterField = JBTextField()
-    private val startButton = JButton("Start")
-    private val stopButton = JButton("Stop")
-    private val clearButton = JButton("Clear")
-    private val autoScroll = JBCheckBox("Auto-scroll", true)
-    private val statusLabel = JBLabel("Idle")
+    private val startButton = JButton("开始")
+    private val stopButton = JButton("停止")
+    private val clearButton = JButton("清空")
+    private val autoScroll = JBCheckBox("自动滚动", true)
+    private val statusLabel = JBLabel("空闲")
     private val outputArea = JBTextArea().apply {
         isEditable = false
         font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
@@ -31,7 +31,7 @@ class LogPane(private val service: HdcService) : JPanel(BorderLayout()) {
 
     init {
         val controls = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
-            add(JBLabel("Filter:"))
+            add(JBLabel("过滤："))
             add(filterField)
             filterField.preferredSize = java.awt.Dimension(160, filterField.preferredSize.height)
             add(startButton)
@@ -46,6 +46,7 @@ class LogPane(private val service: HdcService) : JPanel(BorderLayout()) {
         startButton.addActionListener { start() }
         stopButton.addActionListener { stop() }
         clearButton.addActionListener { outputArea.text = "" }
+        stopButton.isEnabled = false
         bind(null)
     }
 
@@ -59,8 +60,9 @@ class LogPane(private val service: HdcService) : JPanel(BorderLayout()) {
         val current = target ?: return
         stop()
         val generation = ++streamGeneration
-        statusLabel.text = "Streaming hilog..."
+        statusLabel.text = "正在读取 Hilog…"
         startButton.isEnabled = false
+        stopButton.isEnabled = true
         stream = service.startHilog(
             current,
             onLine = { line ->
@@ -73,12 +75,14 @@ class LogPane(private val service: HdcService) : JPanel(BorderLayout()) {
                 if (generation != streamGeneration) return@startHilog
                 stream = null
                 startButton.isEnabled = target != null
-                statusLabel.text = "Stopped"
+                stopButton.isEnabled = false
+                statusLabel.text = "已停止"
             }
         )
         if (stream == null) {
             startButton.isEnabled = true
-            statusLabel.text = "Failed to start"
+            stopButton.isEnabled = false
+            statusLabel.text = "启动失败"
         }
     }
 
@@ -88,7 +92,8 @@ class LogPane(private val service: HdcService) : JPanel(BorderLayout()) {
         stream = null
         current?.stop()
         startButton.isEnabled = target != null
-        statusLabel.text = "Idle"
+        stopButton.isEnabled = false
+        statusLabel.text = "空闲"
     }
 
     private fun appendLine(line: String) {

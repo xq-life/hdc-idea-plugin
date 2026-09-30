@@ -8,8 +8,8 @@ import org.junit.Test
 
 /**
  * Round 7 / UX-CONTRACT v1.8 (A): the tool window used to be fully English while the settings page had
- * already been translated. The product decision is a mixed-language UI — all descriptive copy is
- * Chinese, while the action words the user reads as commands stay English.
+ * already been translated. The product decision is now a consistently Chinese UI; only product
+ * names, professional terms, protocol keys and internal identifiers may stay English.
  *
  * `HdcMainPanel` needs the IntelliJ application and a `Project`, so it cannot be constructed in this
  * JVM; the copy is asserted on the production source (see `MainSources`). The invariant is deliberately
@@ -32,8 +32,6 @@ class PanelLocalizationContractTest {
      *  - client-property / action-map keys and thread names (identifiers, never displayed).
      */
     private val allowedEnglish: Set<String> = setOf(
-        "Connect", "Disconnect", "Forget device \${device.address}",
-        "Scan for devices", "Cancel scan", "Copy address", "Device tools...",
         "HDC Wi-Fi",
         "\${seconds}s", "\$title (\$count)", "\$checked\$label", "\u2713 ",
         "Model", "Product name", "System release", "Software version", "API version",
@@ -84,11 +82,12 @@ class PanelLocalizationContractTest {
             "在本地网络和自定义网段中都没有找到设备。",
             "在本地网络、已保存地址和自定义网段中都没有找到设备。",
             // other empty states and the pre-scan hint
-            "点击 Scan for devices 扫描网络中的设备。",
+            "点击“扫描设备”扫描网络中的设备。",
             "没有已连接的设备。", "没有之前连接过的设备。",
             // toolbar copy and tooltips
-            "清空命令输出", "添加 HDC 设备", "显示或隐藏命令输出", "刷新设备列表",
-            "自动刷新", "选择自动刷新间隔", "HDC Wi-Fi 设置", "的更多操作",
+            "清空命令输出", "添加设备", "扫描设备", "取消扫描", "显示或隐藏命令输出", "刷新设备列表",
+            "自动刷新", "选择自动刷新间隔", "HDC Wi-Fi 设置",
+            "连接", "断开连接", "忘记设备", "设备工具", "复制地址",
             "折叠 \$title", "展开 \$title",
             // last-updated
             "最后更新 -", "最后更新 ",
@@ -120,13 +119,14 @@ class PanelLocalizationContractTest {
     }
 
     @Test
-    fun `the action words, product name and structural templates stay english`() {
+    fun `action words are chinese while product names and structural templates stay stable`() {
         listOf(
-            "\"Scan for devices\"", "\"Cancel scan\"", "\"Forget device \${device.address}\"",
-            "\"Connect\"", "\"Disconnect\"", "\"Copy address\"", "\"Device tools...\"",
-            "\"HDC Wi-Fi\"",
-            "\"\${seconds}s\"", "\"\\u2713 \""
-        ).forEach { assertTrue("this token must stay English as chosen: $it", panel.contains(it)) }
+            "\"添加设备\"", "\"扫描设备\"", "\"取消扫描\"", "\"忘记设备 \${device.address}\"",
+            "\"连接\"", "\"断开连接\"", "\"复制地址\"", "\"设备工具\"",
+            "\"HDC Wi-Fi\"", "\"\${seconds}s\"", "\"\\u2713 \""
+        ).forEach { assertTrue("missing required UI token: $it", panel.contains(it)) }
+        listOf("Connect", "Disconnect", "Scan for devices", "Cancel scan", "Copy address", "Device tools...")
+            .forEach { assertFalse("旧英文动作词不得回到界面：$it", panel.contains("\"$it\"")) }
 
         // the structural constants the wording is built on must not drift either
         assertTrue(panel.contains("private val REFRESH_INTERVALS = listOf(0, 5, 10, 30, 60)"))
@@ -149,7 +149,7 @@ class PanelLocalizationContractTest {
         val code = stripComments(source)
         val literals = mutableListOf<String>()
 
-        val widgetSinks = listOf("iconButton(", "iconButtonWithSource(", "toggleButton(", "JBLabel(", "JMenuItem(")
+        val widgetSinks = listOf("iconButton(", "iconButtonWithSource(", "toggleButton(", "textButton(", "JBLabel(", "JMenuItem(")
         code.lines()
             .filter { line -> widgetSinks.any { line.contains(it) } }
             .forEach { line -> literals += literalsIn(line) }

@@ -16,8 +16,8 @@ import javax.swing.JPanel
 class ShellPane(private val service: HdcService) : JPanel(BorderLayout()) {
 
     private val commandField = JBTextField()
-    private val runButton = JButton("Run")
-    private val clearButton = JButton("Clear")
+    private val runButton = JButton("运行")
+    private val clearButton = JButton("清空")
     private val outputArea = JBTextArea().apply {
         isEditable = false
         font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
@@ -26,7 +26,7 @@ class ShellPane(private val service: HdcService) : JPanel(BorderLayout()) {
 
     init {
         val inputPanel = JPanel(BorderLayout(6, 0)).apply {
-            add(JBLabel("Command:"), BorderLayout.WEST)
+            add(JBLabel("命令："), BorderLayout.WEST)
             add(commandField, BorderLayout.CENTER)
             add(runButton, BorderLayout.EAST)
         }
@@ -53,7 +53,7 @@ class ShellPane(private val service: HdcService) : JPanel(BorderLayout()) {
     fun bind(target: String?) {
         this.target = target
         runButton.isEnabled = target != null
-        append(if (target != null) "\n--- target: $target ---\n" else "\n--- no device selected ---\n")
+        append(if (target != null) "\n--- 目标：$target ---\n" else "\n--- 未选择设备 ---\n")
     }
 
     private fun runCommand() {
@@ -65,7 +65,7 @@ class ShellPane(private val service: HdcService) : JPanel(BorderLayout()) {
         service.shell(current, command) { result ->
             runButton.isEnabled = target != null
             append(result.output)
-            if (!result.ok) append("[command failed, exit ${result.exitCode}]\n")
+            if (!result.ok) append("[命令失败，退出码 ${result.exitCode}]\n")
         }
     }
 

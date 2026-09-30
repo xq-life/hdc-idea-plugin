@@ -8,3 +8,6 @@ idea-sandbox/
 
 # Marketplace signing key pair and its password - never commit these
 signing/
+
+# Local DSH automation skill - keep it available locally, but do not commit it
+.agents/skills/hdc-marketplace-release/

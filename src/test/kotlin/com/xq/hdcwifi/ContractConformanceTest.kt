@@ -86,8 +86,8 @@ class ContractConformanceTest {
     @Test
     fun `forget uses the remove icon and never the gc icon`() {
         val panel = MainSources.panel
-        val forgetLines = panel.lines().filter { it.contains("Forget device") }
-        assertTrue("no Forget button found", forgetLines.isNotEmpty())
+        val forgetLines = panel.lines().filter { it.contains("忘记设备") }
+        assertTrue("未找到忘记设备按钮", forgetLines.isNotEmpty())
         forgetLines.forEach { line ->
             assertTrue("Forget must use AllIcons.General.Remove -> $line", line.contains("AllIcons.General.Remove"))
         }
@@ -105,7 +105,7 @@ class ContractConformanceTest {
         )
         assertTrue(
             "Connected rows must offer Disconnect, the other states Connect",
-            row.contains("text = if (online) \"Disconnect\" else \"Connect\"")
+            row.contains("text = if (online) \"断开连接\" else \"连接\"")
         )
 
         val actionButton = MainSources.bodyOf(MainSources.panel, "private fun actionButton(")
@@ -121,8 +121,8 @@ class ContractConformanceTest {
     fun `a connecting row keeps a visible but disabled action button`() {
         val row = MainSources.bodyOf(MainSources.panel, "private fun deviceRow(")
         assertEquals(
-            "connect, forget and more must all be disabled while connecting",
-            3,
+            "每个条件分支中的设备工具、复制地址、忘记设备和主按钮都必须绑定连接中禁用状态",
+            4,
             Regex("isEnabled = !connecting").findAll(row).count()
         )
         assertTrue("the button must stay in the row while connecting", row.contains("add(actionButton("))
